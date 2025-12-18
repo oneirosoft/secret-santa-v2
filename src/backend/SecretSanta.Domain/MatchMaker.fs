@@ -1,62 +1,79 @@
 module SecretSanta.MatchMaker
 
-let pairUp (players: Player list) : PlayerPairs =
+let private filterForEligibleVictims giver alreadyChosen =
+    let receiverIsNotTheGiver reciever = reciever.nickname <> giver.nickname
 
-    let pair (players: Player list) =
-        let playerTagCount =
-            players
-            |> Seq.fold
-                (fun acc player ->
-                    player.tags
-                    |> Seq.fold
-                        (fun acc tag ->
-                            let currentCount = acc |> Map.tryFind tag |> Option.defaultValue 0
-                            acc |> Map.add tag (currentCount + 1))
-                        acc)
-                Map.empty
+    let thereAreNoTagConflicts receiver =
+        Set.intersect receiver.tags giver.tags |> Set.isEmpty
 
-        let tooManyWithSameTag =
-            playerTagCount
-            |> Map.values
-            |> Seq.exists (fun tagCount ->
-                let playersWithoutTags = players.Length - tagCount
-                playersWithoutTags < tagCount)
+    let receiverHasNotAlreadyBeenChosen receiver =
+        Set.contains receiver.nickname alreadyChosen |> not
 
-        let rec pair (pairs: PlayerPairs) (alreadyPicked: string Set) (i: int) (players: Player list) =
-            if alreadyPicked |> Set.count = players.Length then
-                pairs
+    List.where receiverIsNotTheGiver
+    >> List.where thereAreNoTagConflicts
+    >> List.where receiverHasNotAlreadyBeenChosen
+
+let private countUniqueTags =
+    let collectPlayTags = List.map _.tags >> List.collect Set.toList
+
+    let createTallyMap =
+        List.fold
+            (fun tagsMap tag ->
+                let currentCount = tagsMap |> Map.tryFind tag |> Option.defaultValue 0
+                Map.add tag (currentCount + 1) tagsMap)
+            Map.empty
+
+    let gatTallyCounts = Map.values
+
+    collectPlayTags >> createTallyMap >> gatTallyCounts
+
+let private produceUniquePairs =
+
+    let rec produceUniquePairsLoop currentPairs i (playerPool: Player list) =
+        let updatePairs chosenVictims =
+            let giver = playerPool |> List.item i
+            let eligibleVictims = filterForEligibleVictims giver chosenVictims playerPool
+            let thereAreNoEligibleVictims = eligibleVictims |> List.isEmpty
+
+            if thereAreNoEligibleVictims then
+                currentPairs
             else
-                let usedReceivers = pairs |> Set.map snd
-                let giver = players |> List.item i
+                let victim = List.randomChoice eligibleVictims
+                let updatedPairs = currentPairs |> Set.add (giver.nickname, victim.nickname)
+                produceUniquePairsLoop updatedPairs (i + 1) playerPool
 
-                let eligible =
-                    players
-                    |> List.filter (fun receiver -> receiver.nickname <> giver.nickname)
-                    |> List.filter (fun receiver -> Set.intersect giver.tags receiver.tags |> Set.isEmpty)
-                    |> List.filter (fun receiver -> usedReceivers |> Set.contains receiver.nickname |> not)
-                    |> List.filter (fun receiver -> alreadyPicked |> Set.contains receiver.nickname |> not)
+        let chosenVictims = Set.map snd currentPairs
+        let allPlayesHaveBeenChosen = chosenVictims.Count = playerPool.Length
 
-                if eligible |> List.isEmpty then
-                    pairs
-                else
-                    let victim = eligible |> Seq.randomChoice
-                    let updatedPairs = Set.add (giver.nickname, victim.nickname) pairs
-                    pair updatedPairs (Set.add victim.nickname alreadyPicked) (i + 1) players
-
-        let rec keepPairing players =
-            let pairs = pair Set.empty Set.empty 0 (players |> List.randomShuffle)
-
-            if pairs.Count = players.Length then
-                pairs
-            else
-                keepPairing players
-
-        if tooManyWithSameTag then
-            Set.empty
+        if allPlayesHaveBeenChosen then
+            currentPairs
         else
-            keepPairing players
+            updatePairs chosenVictims
 
-    match players with
-    | []
-    | [ _ ] -> Set.empty
-    | players -> pair players
+    produceUniquePairsLoop Set.empty 0
+
+let rec private startPairing players =
+    let pairs = players |> List.randomShuffle |> produceUniquePairs
+    let pairAndPlayerCountsAlign = players.Length = pairs.Count
+
+    if pairAndPlayerCountsAlign then
+        pairs
+    else
+        startPairing players
+
+let pair (players: Player list) : PlayerPairs =
+
+    let hasTagMajorityConflict =
+        players
+        |> countUniqueTags
+        |> Seq.exists (fun tagCount ->
+            let playersWithoutTags = players.Length - tagCount
+            playersWithoutTags < tagCount)
+
+    if hasTagMajorityConflict then
+        Set.empty
+    else
+        match players with
+        | []
+        | [ _ ] -> Set.empty
+        | players -> startPairing players
