@@ -1,12 +1,14 @@
 namespace SecretSanta
 
+type PlayerPairs = (string * string) Set
+
 type Workshop =
     internal
         { id: Pneumonic
           name: string
           players: Player list
           dollarLimit: float32
-          pairs: (string * string) list }
+          pairs: PlayerPairs }
 
 module Workshop =
 
@@ -15,15 +17,21 @@ module Workshop =
           name = name
           dollarLimit = dollarLimit
           players = []
-          pairs = [] }
+          pairs = Set.empty }
 
     let createWithGeneratedId (name: string, dollarLimit: float32) =
         let pneumonic = Pneumonic.create 7uy
         create (pneumonic, name, dollarLimit)
 
     let addPlayer player workshop =
-        { workshop with
-            players = player :: workshop.players |> List.rev }
+        let playerExists =
+            workshop.players |> List.exists (fun p -> p.nickname = player.nickname)
+
+        if playerExists then
+            workshop
+        else
+            { workshop with
+                players = workshop.players @ [ player ] }
 
     let removePlayer player workshop =
         let rec loop acc =
@@ -34,3 +42,13 @@ module Workshop =
 
         { workshop with
             players = loop [] workshop.players }
+
+    let updatePlayerWishlist nickname wishlistItems workshop =
+        let updateIfMatch player =
+            if player.nickname = nickname then
+                Player.addItems wishlistItems player
+            else
+                player
+
+        { workshop with
+            players = workshop.players |> List.map updateIfMatch }
